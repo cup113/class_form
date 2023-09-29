@@ -1,6 +1,7 @@
 from typing import Any
 from widget import ClickableLabel, Window, EditWindow
-from tkinter import Widget, Label, Button, Entry, StringVar, Frame, messagebox
+from tkinter import Widget, Misc, Label, Button, Frame, Entry, Checkbutton
+from tkinter import StringVar, BooleanVar, messagebox
 from logging import info
 
 from states import LessonState, MessageEnum, State
@@ -8,6 +9,45 @@ from states import LessonState, MessageEnum, State
 
 def to_cn_weekday(weekday: int):
     return "周" + "一二三四五六日"[weekday]
+
+
+class LessonLine:
+    HINT_EMPTY = "<空>"
+    HINT_CONTINUE = "<连下一节>"
+
+    def __init__(self, master: Misc, name: str, period: str, has_sep: bool, sep: str, font: tuple[str, int]):
+        frame = Frame(master)
+        self.var_lesson = StringVar(frame, name)
+        self.var_hint = StringVar(frame, "")
+        self.var_sep = BooleanVar(frame, has_sep)
+        self.entry = Entry(
+            frame, textvariable=self.var_lesson, font=font, width=4)
+        self.sep = sep
+        time_label = Label(frame, text=period, font=font)
+        hint_label = Label(frame, textvariable=self.var_hint,
+                           font=font, width=12)
+        checkbox = Checkbutton(frame, text="分隔", variable=self.var_sep)
+
+        time_label.pack(side='left')
+        self.entry.pack(side='left')
+        checkbox.pack(side='right')
+        hint_label.pack(side='right')
+        frame.pack(side='top', fill='x')
+
+        self.var_lesson.trace_add('write', self.change_lesson)
+        self.change_lesson()
+
+    def change_lesson(self, *args: Any):
+        lesson = self.var_lesson.get()
+        if lesson == self.sep:
+            self.var_lesson.set("")
+            self.var_sep.set(True)
+        elif lesson == "":
+            self.var_hint.set(self.HINT_EMPTY)
+        elif lesson == '~':
+            self.var_hint.set(self.HINT_CONTINUE)
+        else:
+            self.var_hint.set("")
 
 
 class LessonsEditWindow(EditWindow[list[str]]):
@@ -18,27 +58,38 @@ class LessonsEditWindow(EditWindow[list[str]]):
 
     def __init__(self, state: State) -> None:
         super().__init__()
-        self.lines: list[tuple[StringVar, Label, Entry]] = []
+        self.lines: list[LessonLine] = []
+        font = (state.font[0], state.font[1] // 2)
+        lessons = state.today_schedule()
+        timetable = state.raw_timetable
         i = 0
-        # TODO improve
-        for lesson in state.today_schedule():
-            text = ""
-            if lesson not in ['|', '']:
-                text = str(state.raw_timetable[i])
-                i += 1
-            var = StringVar(self, lesson)
-            frame = Frame(self)
-            font = (state.font[0], state.font[1] // 2)
-            line = (var, Label(frame, text=text, font=font),
-                    Entry(frame, textvariable=var, font=font, width=5))
-            line[2].pack(side='right')
-            line[1].pack(side='right')
-            frame.pack(side='top', fill='x')
-            self.lines.append(line)
-        Button(self, text="确认", command=self._terminate).pack()
+        for period in timetable:
+            if i < len(lessons):
+                lesson = lessons[i]
+            else:
+                lesson = ""
+            has_sep = False
+            i += 1
+            while i < len(lessons):
+                if lessons[i] == state.separator:
+                    i += 1
+                    has_sep = True
+                    break
+                elif lessons[i] == "":
+                    i += 1
+                else:
+                    break
+            self.lines.append(LessonLine(
+                self, lesson, period, has_sep, state.separator, font))
+        Button(self, text="确认", font=font, command=self.ok).pack(side='top')
 
     def final_value(self) -> list[str]:
-        return [var.get() for var, _, _ in self.lines]
+        result: list[str] = []
+        for line in self.lines:
+            result.append(line.var_lesson.get())
+            if line.var_sep.get():
+                result.append(line.sep)
+        return result
 
 
 class WeekdayEditWindow(EditWindow[int]):
@@ -57,7 +108,7 @@ class WeekdayEditWindow(EditWindow[int]):
 
                 def inner():
                     self.result = weekday
-                    self._terminate()
+                    self.ok()
                 return inner
             frame = Frame(self)
             frame.pack(side='top', fill='x')
@@ -72,18 +123,16 @@ class WeekdayEditWindow(EditWindow[int]):
 class MainWindow(Window):
     """Main window which displays the timetable."""
 
-    SEP = "|"
-
     def generate_sep(self) -> Label:
-        """Generate a separator label `|`"""
+        """Generate a separator label."""
         return Label(
-            self, text=self.SEP, font=self.state.font,
-            bg=self.state.color_theme.bg, fg=self.state.color_theme.fg)
+            self, text=self.st.separator, font=self.st.font,
+            bg=self.st.color_theme.bg, fg=self.st.color_theme.fg)
 
     def __init__(self, state: State) -> None:
         super().__init__(state)
         self.weekday_label = ClickableLabel(
-            self, "", self.state.font, self.change_weekday, state)
+            self, "", self.st.font, self.change_weekday, state)
         self.class_labels: list[Label] = []
 
     def load(self):
@@ -92,10 +141,10 @@ class MainWindow(Window):
         for child in list(i for i in self.children.values() if i != self.weekday_label):
             child.destroy()
             child.forget()
-        self.weekday_label['text'] = to_cn_weekday(self.state.weekday)
+        self.weekday_label['text'] = to_cn_weekday(self.st.weekday)
 
-        padding_x = self.state.layout.padding_x
-        padding_y = self.state.layout.padding_y
+        padding_x = self.st.layout.padding_x
+        padding_y = self.st.layout.padding_y
 
         x = padding_x
         height = 0
@@ -108,15 +157,17 @@ class MainWindow(Window):
 
         place(self.weekday_label)
         place(self.generate_sep())
-        for text in self.state.today_schedule():
-            if text == self.SEP:
+        for text in self.st.today_schedule():
+            if text == "":
+                continue
+            if text == self.st.separator:
                 place(self.generate_sep())
                 continue
             elif text == '~':
                 continue
             label = Label(
-                self, text=text, font=self.state.font,
-                bg=self.state.color_theme.bg, fg=self.state.color_theme.fg
+                self, text=text, font=self.st.font,
+                bg=self.st.color_theme.bg, fg=self.st.color_theme.fg
             )
             place(label)
             self.class_labels.append(label)
@@ -128,11 +179,11 @@ class MainWindow(Window):
             ("上课", self.class_advance, "orange"),
             ("关闭", self.close_destroy, "red")
         ]
-        small_font = (self.state.font[0], int(self.state.font[1] * 0.4))
+        small_font = (self.st.font[0], int(self.st.font[1] * 0.4))
 
         for i, btn in enumerate(buttons):
             text, func, color = btn
-            button = ClickableLabel(self, text, small_font, func, self.state)
+            button = ClickableLabel(self, text, small_font, func, self.st)
             button['fg'] = color
             if i % 2 == 0:
                 button.place(x=x, y=padding_y)
@@ -142,50 +193,50 @@ class MainWindow(Window):
         x += padding_x
         height += 2 * padding_y
         window_x = (self.winfo_screenwidth() - x) // 2
-        self.geometry_state((1, height, window_x, self.state.layout.margin_y))
-        self.animate((x, height, window_x, self.state.layout.margin_y), 2000)
-        self.state.queue.put((MessageEnum.Resize, 2000))
+        self.geometry_state((1, height, window_x, self.st.layout.margin_y))
+        self.animate((x, height, window_x, self.st.layout.margin_y), 2000)
+        self.st.queue.put((MessageEnum.Resize, 2000))
 
     def change_weekday(self, _: Any) -> None:
         info("Try changing the weekday.")
-        weekday = WeekdayEditWindow(self.state).run()
+        weekday = WeekdayEditWindow(self.st).run()
         info(f"Change weekday to: {weekday}")
         if weekday is not None:
-            self.state.weekday_map[self.state.now.weekday()] = weekday
+            self.st.weekday_map[self.st.now.weekday()] = weekday
 
     def change_class(self, _: Any) -> None:
         """Change the classes."""
-        new_lessons = LessonsEditWindow(self.state).run()
+        new_lessons = LessonsEditWindow(self.st).run()
         info(f"Change classes to: {new_lessons}")
         if new_lessons is not None:
-            self.state.raw_schedule[self.state.weekday] = new_lessons
-            self.state.load_lessons()
+            self.st.raw_schedule[self.st.weekday] = new_lessons
+            self.st.load_lessons()
             self.load()
 
     def class_advance(self, _: Any) -> None:
         """Begin next class in advance."""
         HINT = "此功能只能在下课或预备铃中使用。\n如果想在上课时隐藏窗口，点击课表再点击别处即可。"
-        lesson_state = self.state.lesson_state
-        current_lesson = self.state.current_lesson
+        lesson_state = self.st.lesson_state
+        current_lesson = self.st.current_lesson
         info("Class Advance triggers. (lesson_state={0}, current_lesson={1})".format(
             lesson_state, current_lesson))
-        if lesson_state in [LessonState.Break, LessonState.Preparing]:
-            name = self.state.i_lesson(current_lesson).name
+        if lesson_state in [LessonState.BeforeSchool, LessonState.Break, LessonState.Preparing]:
+            name = self.st.i_lesson(current_lesson).name
             hint = f"此操作将会提前进入下一节课: {name}。确定吗？"
             if messagebox.askokcancel("操作确认", hint):  # type: ignore
-                self.state.queue.put((MessageEnum.ClassAdvance, ))
+                self.st.queue.put((MessageEnum.ClassAdvance, ))
         else:
             messagebox.showinfo("提示", HINT)  # type: ignore
 
     def hide_temporarily(self, _: Any) -> None:
         """Delay the last lesson and cancel topmost."""
         HINT = "此功能只能在下课时使用。\n如果想提前上课，请点击“上课”\n如果想在上课时隐藏窗口，点击课表再点击别处即可。"
-        lesson_state = self.state.lesson_state
-        current_lesson = self.state.current_lesson
+        lesson_state = self.st.lesson_state
+        current_lesson = self.st.current_lesson
         info("Class Advance triggers. (lesson_state={0}, current_lesson={1})".format(
             lesson_state, current_lesson))
         if lesson_state in [LessonState.Break, LessonState.AfterSchool]:
-            self.state.queue.put((MessageEnum.HideTemporarily, ))
+            self.st.queue.put((MessageEnum.HideTemporarily, ))
         else:
             messagebox.showinfo("提示", HINT)  # type: ignore
 
@@ -200,7 +251,7 @@ class MainWindow(Window):
     def quit(self, quit_program: bool = True) -> None:
         super().quit()
         if quit_program:
-            self.state.queue.put((MessageEnum.ShutDown, ))
+            self.st.queue.put((MessageEnum.ShutDown, ))
 
 
 class SecondWindow(Window):
@@ -210,9 +261,9 @@ class SecondWindow(Window):
         super().__init__(state)
         self._text = ""
         self.label = Label(
-            self, text=self._text, font=self.state.font, bg=self.state.color_theme.bg, fg="yellow")
-        self.label.place(x=self.state.layout.padding_x,
-                         y=self.state.layout.padding_y)
+            self, text=self._text, font=self.st.font, bg=self.st.color_theme.bg, fg="yellow")
+        self.label.place(x=self.st.layout.padding_x,
+                         y=self.st.layout.padding_y)
         self.geometry_state((1, 1, 0, 0))
 
     def set_text(self, text: str):
@@ -229,7 +280,7 @@ class SecondWindow(Window):
         if big_change:
             info("Second Window Big-Change Resize")
             self.geometry_state((1, 1, self.winfo_x(), self.winfo_y()))
-            self.state.queue.put((MessageEnum.Resize, 3000))
+            self.st.queue.put((MessageEnum.Resize, 3000))
         elif self.label.winfo_reqwidth() != width_original:
             info("Second Window Routine Resize")
-            self.state.queue.put((MessageEnum.Resize, 500))
+            self.st.queue.put((MessageEnum.Resize, 500))

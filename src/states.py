@@ -111,6 +111,7 @@ class State:
         self.raw_schedule = [raw_schedule[str(i)] for i in range(1, 8)]
         self.raw_timetable = raw_timetable
         self.timetable = list(map(self.parse_period, raw_timetable))
+        self.separator = str(config["分隔符"])
         self.self_study_lessons = set(self_study_lessons)
         self.preparation = timedelta(minutes=preparation_minutes)
         self.temporary_hide = timedelta(minutes=temporary_hide_minutes)
@@ -159,10 +160,11 @@ class State:
 
         self.lessons.clear()
         self.current_lesson = 0
+        self.lesson_state = LessonState.BeforeSchool
         i = 0
         start = None
         for name in self.today_schedule():
-            if name == '|' or len(name) == 0:
+            if name in ["", self.separator]:
                 continue
             elif name == '~':
                 if start is None:

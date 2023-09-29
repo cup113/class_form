@@ -12,6 +12,7 @@ T = TypeVar('T')
 class Window(Tk):
     """Base Class Customized for this application."""
     ANIMATION_FRAME_MS = 20
+    TITLE = "Class Form"
 
     def _ease_in_out(self, x: float) -> float:
         """Smoothing function [0, 1] -> [0, 1] whose derivatives at 0.0 and 1.0 are both 0."""
@@ -54,8 +55,8 @@ class Window(Tk):
             clock.wait()
 
     def __init__(self, state: State) -> None:
-        super().__init__()
-        self.state = state
+        super().__init__(self.TITLE, self.TITLE, self.TITLE)
+        self.st = state
         self.attributes("-alpha", state.alpha)  # type: ignore
         self.overrideredirect(True)
         self.config(bg=state.color_theme.bg)
@@ -73,7 +74,7 @@ class EditWindow(Tk, Generic[T]):
         self.attributes('-topmost', True)  # type: ignore
         self.changed = False
 
-    def _terminate(self) -> None:
+    def ok(self) -> None:
         info(self.LOGGING_NAME + " Edit Window Terminated")
         self.changed = True
         self.destroy()
@@ -83,7 +84,8 @@ class EditWindow(Tk, Generic[T]):
         self.quit()
 
     def final_value(self) -> T:
-        raise NotImplementedError("final_value() isn't implemented in EditWindow class.")
+        raise NotImplementedError(
+            "final_value() isn't implemented in EditWindow class.")
 
     def run(self) -> Optional[T]:
         """Get the result of editing in the form of one-day raw schedule."""

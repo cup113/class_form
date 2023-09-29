@@ -8,4 +8,4 @@ class Clock:
     def wait(self):
         this_time = time()
         sleep(max(0.0, self.last_time + self.interval - this_time))
-        self.last_time = this_time
+        self.last_time = self.last_time + self.interval

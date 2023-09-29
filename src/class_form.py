@@ -61,8 +61,7 @@ class Calender:
                     info(f"Event captured: {event}")
                 except Empty:
                     break
-                if not breaking or event[0] in [MessageEnum.Resize, MessageEnum.ShutDown]:
-                    self.handle_event(event)
+                self.handle_event(event)
 
     def set_windows_topmost(self, topmost: bool) -> None:
         self.main_window.set_topmost(topmost)
@@ -156,7 +155,7 @@ class Calender:
             lesson = self.state.i_lesson(self.state.current_lesson)
             total = self.minute(self.state.preparation)
             last = self.minute(lesson.start - self.state.now)
-            text = "预备 {0}/{1:.0f}".format(
+            text = "预备铃 {0}/{1:.0f}".format(
                 self.format_minutes(last, 10), total
             )
         elif self.state.lesson_state == LessonState.Break:
