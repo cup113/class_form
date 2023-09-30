@@ -1,7 +1,9 @@
 from queue import Empty
 from math import ceil
-from logging import info
+from logging import info, error
 from datetime import timedelta
+from traceback import format_exception
+from tkinter.messagebox import showerror # type: ignore
 
 from states import LessonState, MessageEnum, Message, State, PollEnum, PollResult
 from clock import Clock
@@ -187,5 +189,10 @@ class Calender:
 
 if __name__ == "__main__":
     init_logger()
-    calender = Calender()
-    calender.mainloop()
+    try:
+        calender = Calender()
+        calender.mainloop()
+    except Exception as e:
+        msg = ''.join(format_exception(e))
+        error(msg)
+        showerror("程序出错", "详见日志\n\n" + msg)
