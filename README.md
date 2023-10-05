@@ -1,7 +1,7 @@
 # 灵动课表
 
-> 注：此课表为重构版，未经长时间严格测试，**很可能存在漏洞。尽量不要连续操作。**
-> 请谅解，有条件可报告至 <https://github.com/cup113/class_form>
+> 注：此课表为重构版，未经长时间严格测试，**很可能存在漏洞。尽量不要连续操作（尤其是动画时）。**
+> 请谅解，有条件可报告至 <https://github.com/cup113/class_form/issues>
 
 ## 使用方法
 
@@ -23,7 +23,13 @@
 
 ## 配置文件解释
 
-> 请按照 json 格式编辑
+> 请按照 json 格式编辑。
+>
+> 配置文件默认为 `config.json`，
+> 但更新有可能会将其覆盖，建议复制一份保存为`config_custom.json`。
+> 如遇到特殊情况，可复制一份命名为`config_special.json`后修改。
+>
+> 读取时，优先读取`config_special.json`，如找不到再尝试读取`config_custom.json`，找不到再尝试`config.json`。
 
 ### 日程表
 

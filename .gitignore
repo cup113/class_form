@@ -1,3 +1,5 @@
 /**/__pycache__
 /dist
 /src/logs
+/config_custom*.json
+/config_special*.json

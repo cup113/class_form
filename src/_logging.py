@@ -1,4 +1,4 @@
-from logging import basicConfig, INFO, DEBUG
+from logging import basicConfig, INFO, DEBUG  # pyright: ignore
 from sys import argv
 from os import mkdir
 from os.path import join, dirname, exists

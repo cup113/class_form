@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional, Union, Literal
+from typing import Optional, Union, Literal, Any
 from json import load as json_load
 from queue import Queue
 from datetime import timedelta, datetime
@@ -62,12 +62,16 @@ class Lesson:
     """A class which stores current time-related information of lesson.
     May get wrong if the program has continuously been running for more than a week."""
 
-    def __init__(self, name: str, start: timedelta, finish: timedelta, preparation: timedelta) -> None:
+    def __init__(
+        self, name: str, start: timedelta, finish: timedelta,
+        preparation: timedelta, empty_before: int
+    ) -> None:
         now = datetime.now()
         today = datetime(now.year, now.month, now.day)
         self.name = name
         self.start = today + start
         self.finish = today + finish
+        self.empty_before = empty_before
         self.prepare = self.start - preparation
         self.delay = timedelta(0)
 
@@ -79,7 +83,7 @@ class State:
     """Main data storage. Read from config file."""
 
     PERIOD_SEP = "-"
-    FILE = "config.json"
+    FILES = ["config_special.json", "config_custom.json", "config.json"]
     ENCODING = "utf-8"
     TIME_OFFSET = timedelta(hours=0, minutes=0)  # for development use
 
@@ -95,10 +99,19 @@ class State:
         return (timedelta(hours=int(begin_hour), minutes=int(begin_minute)),
                 timedelta(hours=int(end_hour), minutes=int(end_minute)))
 
+    @staticmethod
+    def load_config() -> dict[str, Any]:
+        for i, file in enumerate(State.FILES):
+            try:
+                with open(file, 'r', encoding=State.ENCODING) as f:
+                    return json_load(f)
+            except Exception as e:
+                info(f"Config file #{i} ({file}) not found: {e}")
+        raise FileNotFoundError(f"All 3 config files {State.FILES} not found.")
+
     def __init__(self):
         """Read config from file"""
-        with open(self.FILE, 'r', encoding=self.ENCODING) as f:
-            config = json_load(f)
+        config = self.load_config()
         raw_schedule: dict[str, list[str]] = config["日程表"]
         raw_timetable: list[str] = config["课程时间"]
         self_study_lessons: list[str] = config["自主课程"]
@@ -163,12 +176,13 @@ class State:
         self.current_lesson = 0
         self.lesson_state = LessonState.BeforeSchool
         i = 0
+        empty_before = 0
         start = None
         for name in self.today_schedule():
             if name == self.separator:
                 continue
             elif name == "":
-                pass
+                empty_before += 1
             elif name == '~':
                 if start is None:
                     start = self.timetable[i][0]
@@ -176,9 +190,10 @@ class State:
                 if start is None:
                     start = self.timetable[i][0]
                 finish = self.timetable[i][1]
-                self.lessons.append(
-                    Lesson(name, start, finish, self.preparation))
+                self.lessons.append(Lesson(
+                    name, start, finish, self.preparation, empty_before))
                 start = None
+                empty_before = 0
             i += 1
 
     def i_lesson(self, i: int) -> Lesson:

@@ -70,15 +70,9 @@ class LessonsEditWindow(EditWindow[list[str]]):
                 lesson = ""
             has_sep = False
             i += 1
-            while i < len(lessons):
-                if lessons[i] == state.separator:
-                    i += 1
-                    has_sep = True
-                    break
-                elif lessons[i] == "":
-                    i += 1
-                else:
-                    break
+            if i < len(lessons) and lessons[i] == state.separator:
+                i += 1
+                has_sep = True
             self.lines.append(LessonLine(
                 self, lesson, period, has_sep, state.separator, font))
         Button(self, text="确认", font=font, command=self.ok).pack(side='top')
