@@ -81,6 +81,7 @@ class State:
     PERIOD_SEP = "-"
     FILE = "config.json"
     ENCODING = "utf-8"
+    TIME_OFFSET = timedelta(hours=0, minutes=0)  # for development use
 
     @staticmethod
     def parse_period(period: str) -> tuple[timedelta, timedelta]:
@@ -164,8 +165,10 @@ class State:
         i = 0
         start = None
         for name in self.today_schedule():
-            if name in ["", self.separator]:
+            if name == self.separator:
                 continue
+            elif name == "":
+                pass
             elif name == '~':
                 if start is None:
                     start = self.timetable[i][0]
@@ -203,8 +206,7 @@ class State:
     def _poll(self) -> Optional[PollResult]:
         """Poll and simulate the progress of schedule."""
 
-        self.now = datetime.now()
-        # self.now -= timedelta(hours=0, minutes=4)
+        self.now = datetime.now() + self.TIME_OFFSET
         mapped_weekday = self.weekday_map.get(self.now.weekday())
 
         if mapped_weekday is not None:
@@ -219,7 +221,7 @@ class State:
         if self.lesson_state == LessonState.BeforeSchool:
             if self.poll_class_preparation(0):
                 self.lesson_state = LessonState.Preparing
-                return (PollEnum.ClassBegin, )
+                return (PollEnum.ClassPrepare, 0)
 
         elif self.lesson_state == LessonState.Preparing:
             if self.poll_class_begin(self.current_lesson):

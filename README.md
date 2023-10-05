@@ -101,3 +101,11 @@
 - [x] 具有一定的设计模式
 - [x] 易于重构
 - [x] 日志功能较完善
+
+## 致谢
+
+原版：
+- [@DuguSand](https://github.com/DuguSand):[class_form](https://github.com/DuguSand/class_form)
+
+图标：
+- [build/favicon.ico by Freepik](https://www.freepik.com/icon/timetable_1048953")

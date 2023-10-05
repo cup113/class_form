@@ -270,8 +270,14 @@ class SecondWindow(Window):
         """Set the text of the window and rerenders or resizes it only when required."""
         if text == self._text:
             return
-        big_change = self._text != "" and \
-            self._text.split(' ')[0] != text.split(' ')[0]
+        old_splitted = self._text.split()
+        new_splitted = text.split()
+        if len(old_splitted) == 0:
+            big_change = True
+        elif len(new_splitted) == 1 and len(old_splitted) == 1:
+            big_change = False
+        else:
+            big_change = new_splitted[0] != old_splitted[0]
         width_original = self.label.winfo_reqwidth()
         self._text = text
         self.label['text'] = text

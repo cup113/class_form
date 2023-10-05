@@ -142,6 +142,7 @@ class Calender:
 
     def poll_update(self):
         """Polling, updating mainly the second window and resizing."""
+        MIN_POINT = 9.9
         text = ""
         if self.state.lesson_state == LessonState.AtClass:
             text = "上课时间"
@@ -151,14 +152,14 @@ class Calender:
                     lesson.finish + lesson.delay - lesson.start)
                 last = self.minute(lesson.finish - self.state.now)
                 text += " {0}/{1:.0f}".format(
-                    self.format_minutes(last, min(10, total / 2)), total
+                    self.format_minutes(last, min(MIN_POINT, total / 2)), total
                 )
         elif self.state.lesson_state == LessonState.Preparing:
             lesson = self.state.i_lesson(self.state.current_lesson)
             total = self.minute(self.state.preparation)
             last = self.minute(lesson.start - self.state.now)
             text = "预备铃 {0}/{1:.0f}".format(
-                self.format_minutes(last, 10), total
+                self.format_minutes(last, MIN_POINT), total
             )
         elif self.state.lesson_state == LessonState.Break:
             lesson = self.state.i_lesson(self.state.current_lesson)
@@ -167,7 +168,7 @@ class Calender:
                 self.state.i_lesson(self.state.current_lesson - 1).finish)
             last = self.minute(lesson.prepare - self.state.now)
             text = "下课 {0}/{1:.0f}".format(
-                self.format_minutes(last, min(10, total / 2)), total
+                self.format_minutes(last, min(MIN_POINT, total / 2)), total
             )
             current_lesson = self.state.current_lesson
             if current_lesson > 0:
@@ -178,12 +179,12 @@ class Calender:
         elif self.state.lesson_state == LessonState.BeforeSchool:
             first_lesson = self.state.i_lesson(0)
             text = "{}".format(self.format_minutes(self.minute(
-                first_lesson.prepare - self.state.now), 10))
+                first_lesson.prepare - self.state.now), MIN_POINT))
         elif self.state.lesson_state == LessonState.AfterSchool:
             self.main_window.class_labels[-1]['fg'] = self.state.color_theme.fg
             last_lesson = self.state.i_lesson(-1)
             text = "放学 {}".format(self.format_minutes(
-                self.minute(self.state.now - last_lesson.finish), 10))
+                self.minute(self.state.now - last_lesson.finish), MIN_POINT))
         self.second_window.set_text(text)
 
 
@@ -196,3 +197,5 @@ if __name__ == "__main__":
         msg = ''.join(format_exception(e))
         error(msg)
         showerror("程序出错", "详见日志\n\n" + msg)
+    except KeyboardInterrupt:
+        info("Quit by KeyboardInterrupt.")
