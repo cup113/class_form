@@ -43,7 +43,7 @@ class ColorTheme:
     def gradient(self, ratio: float) -> str:
         """"""
         return color_to_hex((
-            int(self.fg_tuple[0] * ratio + self.hint_tuple[0] * (1 - ratio)),
-            int(self.fg_tuple[1] * ratio + self.hint_tuple[1] * (1 - ratio)),
-            int(self.fg_tuple[2] * ratio + self.hint_tuple[2] * (1 - ratio))
+            int(self.fg_tuple[0] * (1 - ratio) + self.hint_tuple[0] * ratio),
+            int(self.fg_tuple[1] * (1 - ratio) + self.hint_tuple[1] * ratio),
+            int(self.fg_tuple[2] * (1 - ratio) + self.hint_tuple[2] * ratio)
         ))

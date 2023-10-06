@@ -1,10 +1,11 @@
-from typing import Any
+from typing import Any, Optional, Literal, Union
 from widget import ClickableLabel, Window, EditWindow
+from logging import info
+from enum import Enum
 from tkinter import Widget, Misc, Label, Button, Frame, Entry, Checkbutton
 from tkinter import StringVar, BooleanVar, messagebox
-from logging import info
 
-from states import LessonState, MessageEnum, State
+from states import LessonState, State
 
 
 def to_cn_weekday(weekday: int):
@@ -106,22 +107,42 @@ class WeekdayEditWindow(EditWindow[int]):
                 return inner
             frame = Frame(self)
             frame.pack(side='top', fill='x')
-            text = "{0} ({1})".format(to_cn_weekday(
-                i), " ".join(state.raw_schedule[i]))
+            text = "{0} ({1})".format(
+                to_cn_weekday(i),
+                " ".join(state.raw_schedule[i])
+            )
             Button(frame, text=text, font=font, command=command()).pack()
 
     def final_value(self) -> int:
         return self.result
 
 
+class MainPollEnum(Enum):
+    """State sent to dispatching center."""
+    ShutDown = 0
+    ClassAdvance = 1
+    HideTemporarily = 2
+    Resize = 3
+    ChangeClass = 4
+    ChangeWeekday = 5
+
+
+MainPollResult = Union[
+    tuple[Literal[MainPollEnum.ShutDown]],
+    tuple[Literal[MainPollEnum.ClassAdvance],
+          Union[Literal['on'], Literal['off']]],
+    tuple[Literal[MainPollEnum.HideTemporarily]],
+    tuple[Literal[MainPollEnum.Resize], int],
+    tuple[Literal[MainPollEnum.ChangeClass]],
+    tuple[Literal[MainPollEnum.ChangeWeekday]],
+]
+
+WillClassAdvance = Optional[Union[Literal['on'], Literal['off']]]
+WillLoadResize = Optional[int]
+
+
 class MainWindow(Window):
     """Main window which displays the timetable."""
-
-    def generate_sep(self) -> Label:
-        """Generate a separator label."""
-        return Label(
-            self, text=self.st.separator, font=self.st.font,
-            bg=self.st.color_theme.bg, fg=self.st.color_theme.fg)
 
     def __init__(self, state: State) -> None:
         super().__init__(state)
@@ -129,6 +150,19 @@ class MainWindow(Window):
             self, "", self.st.font, self.change_weekday, state)
         self.class_labels: list[Label] = []
         self.class_advance_label: Label = Label(self)
+
+        self.will_shutdown = False
+        self.will_class_advance: WillClassAdvance = None
+        self.will_hide_temp = False
+        self.will_load_resize: WillLoadResize = None
+        self.will_change_class = False
+        self.will_change_weekday = False
+
+    def generate_sep(self) -> Label:
+        """Generate a separator label."""
+        return Label(
+            self, text=self.st.separator, font=self.st.font,
+            bg=self.st.color_theme.bg, fg=self.st.color_theme.fg)
 
     def load(self):
         """(Re)Load the window. Generate and place labels and buttons on the window."""
@@ -191,42 +225,30 @@ class MainWindow(Window):
         height += 2 * padding_y
         window_x = (self.winfo_screenwidth() - x) // 2
         self.geometry_state((1, height, window_x, self.st.layout.margin_y))
-        self.animate((x, height, window_x, self.st.layout.margin_y), 2000)
-        self.st.queue.put((MessageEnum.Resize, 2000))
+        self.will_load_resize = x
 
     def change_weekday(self, _: Any) -> None:
-        info("Try changing the weekday.")
-        weekday = WeekdayEditWindow(self.st).run()
-        info(f"Change weekday to: {weekday}")
-        if weekday is not None:
-            self.st.weekday_map[self.st.now.weekday()] = weekday
+        self.will_change_weekday = True
 
     def change_class(self, _: Any) -> None:
-        """Change the classes."""
-        new_lessons = LessonsEditWindow(self.st).run()
-        info(f"Change classes to: {new_lessons}")
-        if new_lessons is not None:
-            self.st.raw_schedule[self.st.weekday] = new_lessons
-            self.st.load_lessons()
-            self.load()
+        self.will_change_class = True
 
     def class_advance(self, _: Any) -> None:
         """Begin next class in advance."""
         HINT = "此功能只能在下课或预备铃中使用。\n如果想在上课时隐藏窗口，点击课表再点击别处即可。"
         lesson_state = self.st.lesson_state
-        current_lesson = self.st.current_lesson
-        info("Class Advance triggers. (lesson_state={0}, current_lesson={1})".format(
-            lesson_state, current_lesson))
+        info("Class Advance triggers. (lesson_state={0}, current_index={1})".format(
+            lesson_state, self.st.current_index))
         if lesson_state in [LessonState.BeforeSchool, LessonState.Break, LessonState.Preparing]:
-            name = self.st.i_lesson(current_lesson).name
+            name = self.st.current_lesson().name
             hint = f"此操作将会提前进入下一节课: {name}。确定吗？"
             if messagebox.askokcancel("操作确认", hint):  # type: ignore
-                self.st.queue.put((MessageEnum.ClassAdvance, 'on'))
+                self.will_class_advance = 'on'
         elif lesson_state in [LessonState.AtClass]:
-            name = self.st.i_lesson(current_lesson).name
+            name = self.st.current_lesson().name
             hint = f"此操作会提前下课 (本节为 {name})。确定吗？"
-            if messagebox.askokcancel("操作确认", hint): # type: ignore
-                self.st.queue.put((MessageEnum.ClassAdvance, 'off'))
+            if messagebox.askokcancel("操作确认", hint):  # type: ignore
+                self.will_class_advance = 'off'
         else:
             messagebox.showinfo("提示", HINT)  # type: ignore
 
@@ -234,11 +256,11 @@ class MainWindow(Window):
         """Delay the last lesson and cancel topmost."""
         HINT = "此功能只能在下课时使用。\n如果想提前上课，请点击“上课”\n如果想在上课时隐藏窗口，点击课表再点击别处即可。"
         lesson_state = self.st.lesson_state
-        current_lesson = self.st.current_lesson
+        current_lesson = self.st.current_index
         info("Class Advance triggers. (lesson_state={0}, current_lesson={1})".format(
             lesson_state, current_lesson))
         if lesson_state in [LessonState.Break, LessonState.AfterSchool]:
-            self.st.queue.put((MessageEnum.HideTemporarily, ))
+            self.will_hide_temp = True
         else:
             messagebox.showinfo("提示", HINT)  # type: ignore
 
@@ -246,14 +268,44 @@ class MainWindow(Window):
         """Close and quit the program."""
         HINT = "确认关闭吗？关闭后需要手动重启课表。\n如果想要 提前 上课，请点击“上课”。\n如果想要 继续 上课，请点击“隐藏”。"
         if messagebox.askokcancel("确认关闭吗", HINT):  # type: ignore
-            self.animate((1, 1, 1, 1), 500)
             self.destroy()
-            self.quit()
 
-    def quit(self, quit_program: bool = True) -> None:
-        super().quit()
+    def poll(self) -> Optional[MainPollResult]:
+        if self.will_shutdown:
+            self.will_shutdown = False
+            return (MainPollEnum.ShutDown, )
+        if self.will_load_resize is not None:
+            width, self.will_load_resize = self.will_load_resize, None
+            return (MainPollEnum.Resize, width)
+        if self.will_class_advance is not None:
+            will_class_advance, self.will_class_advance = self.will_class_advance, None
+            return (MainPollEnum.ClassAdvance, will_class_advance)
+        if self.will_hide_temp:
+            self.will_hide_temp = False
+            return (MainPollEnum.HideTemporarily, )
+        if self.will_change_class:
+            self.will_change_class = False
+            return (MainPollEnum.ChangeClass, )
+        if self.will_change_weekday:
+            self.will_change_weekday = False
+            return (MainPollEnum.ChangeWeekday, )
+
+    def destroy(self, quit_program: bool = False) -> None:
         if quit_program:
-            self.st.queue.put((MessageEnum.ShutDown, ))
+            self.animate((1, 1, 1, 1), 500)
+            super().destroy()
+            super().quit()
+        else:
+            self.will_shutdown = True
+
+
+class SecondPollResult(Enum):
+    ShutDown = 0
+    BigChangeResize = 1
+    SmallChangeResize = 2
+
+
+WillSecondResize = Optional[Union[Literal["big"], Literal["small"]]]
 
 
 class SecondWindow(Window):
@@ -261,34 +313,51 @@ class SecondWindow(Window):
 
     def __init__(self, state: State) -> None:
         super().__init__(state)
-        self._text = ""
+        self._text = ("", "")
         self.label = Label(
-            self, text=self._text, font=self.st.font, bg=self.st.color_theme.bg, fg="yellow")
+            self, text="", font=self.st.font, bg=self.st.color_theme.bg, fg="yellow")
         self.label.place(x=self.st.layout.padding_x,
                          y=self.st.layout.padding_y)
         self.geometry_state((1, 1, 0, 0))
 
-    def set_text(self, text: str):
+        self.will_shutdown = False
+        self.will_resize: WillSecondResize = None
+
+    def set_text(self, text: tuple[str, str]):
         """Set the text of the window and rerenders or resizes it only when required."""
         if text == self._text:
             return
-        old_splitted = self._text.split()
-        new_splitted = text.split()
-        if len(old_splitted) == 0:
-            big_change = True
-        elif len(new_splitted) == 1 and len(old_splitted) == 1:
-            big_change = False
-        else:
-            big_change = new_splitted[0] != old_splitted[0]
+        big_change = text != ("", "") and text[0] != self._text[0]
         width_original = self.label.winfo_reqwidth()
         self._text = text
-        self.label['text'] = text
+        text_display = " ".join(t for t in text if len(t) > 0)
+        self.label['text'] = text_display
         self.update()
         info(f"Second Window text changes to {text}")
         if big_change:
             info("Second Window Big-Change Resize")
             self.geometry_state((1, 1, self.winfo_x(), self.winfo_y()))
-            self.st.queue.put((MessageEnum.Resize, 3000))
+            self.will_resize = 'big'
         elif self.label.winfo_reqwidth() != width_original:
             info("Second Window Routine Resize")
-            self.st.queue.put((MessageEnum.Resize, 500))
+            self.will_resize = 'small'
+
+    def poll(self) -> Optional[SecondPollResult]:
+        if self.will_shutdown:
+            return SecondPollResult.ShutDown
+        if self.will_resize is not None:
+            will_resize, self.will_resize = self.will_resize, None
+            if will_resize == 'big':
+                return SecondPollResult.BigChangeResize
+            elif will_resize == 'small':
+                return SecondPollResult.SmallChangeResize
+            else:
+                assert False, f"unreachable {will_resize}"
+
+    def destroy(self, quit_program: bool = False) -> None:
+        if quit_program:
+            self.animate((1, 1, 1, 1), 500)
+            super().destroy()
+            super().quit()
+        else:
+            self.will_shutdown = True

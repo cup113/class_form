@@ -1,18 +1,21 @@
-from queue import Empty
 from math import ceil
+from typing import Optional
 from logging import info, error
 from datetime import timedelta
 from traceback import format_exception
-from tkinter.messagebox import showerror # type: ignore
+from tkinter.messagebox import showerror  # type: ignore
 
-from states import LessonState, MessageEnum, Message, State, PollEnum, PollResult
+from states import LessonState, State, StatePollEnum, StatePollResult
 from clock import Clock
 from _logging import init_logger
-from windows import MainWindow, SecondWindow
+from windows import MainWindow, SecondWindow, LessonsEditWindow, WeekdayEditWindow
+from windows import MainPollEnum, MainPollResult, SecondPollResult
 
 
 class Calender:
     """Main program class."""
+
+    MAX_POINT_DISPLAY = 9.9
 
     @classmethod
     def format_minutes(cls, minute: float, max_limit: float) -> str:
@@ -34,171 +37,239 @@ class Calender:
     def minute(cls, delta: timedelta) -> float:
         return delta.total_seconds() / 60
 
+    @classmethod
+    def format_progress(cls, remaining: timedelta, total: timedelta, half_limit: bool) -> str:
+        total_min = cls.minute(total)
+        remaining_min = cls.minute(remaining)
+        max_limit = cls.MAX_POINT_DISPLAY
+        if half_limit:
+            max_limit = min(max_limit, total_min / 2)
+        return "{0}/{1:.0f}".format(
+            cls.format_minutes(remaining_min, max_limit),
+            total_min
+        )
+
     def __init__(self) -> None:
-        self.state = State()
-        self.main_window = MainWindow(self.state)
-        self.second_window = SecondWindow(self.state)
+        self.st = State()
+        self.main_window = MainWindow(self.st)
+        self.second_window = SecondWindow(self.st)
         self.main_window.load()
         self.running = True
 
-        info("Initialized\n{}".format(repr(self.state)))
+        info("Initialized\n{}".format(repr(self.st)))
 
     def mainloop(self) -> None:
-        clock = Clock(self.state.inspect_interval)
+        clock = Clock(self.st.inspect_interval)
         while self.running:
             clock.wait()
-            poll_results = self.state.poll_all()
+            poll_results = self.st.poll_all()
             breaking = False
             for i, poll_result in enumerate(poll_results):
-                if self.handle_poll(poll_result, i + 1 == len(poll_results)):
+                if self.handle_state_poll(poll_result, i + 1 == len(poll_results)):
                     breaking = True
             if breaking:
                 info("Breaking poll result. Continue.")
             if not breaking:
+                main_poll_result = self.main_window.poll()
+                if main_poll_result is not None:
+                    self.handle_main_poll(main_poll_result)
+                second_poll_result = self.second_window.poll()
+                if second_poll_result is not None:
+                    self.handle_second_poll(second_poll_result)
+                if not self.running:
+                    break
                 self.poll_update()
             self.main_window.update()
-            while True:
-                try:
-                    event = self.state.queue.get(False)
-                    info(f"Event captured: {event}")
-                except Empty:
-                    break
-                self.handle_event(event)
 
     def set_windows_topmost(self, topmost: bool) -> None:
         self.main_window.set_topmost(topmost)
         self.second_window.set_topmost(topmost)
 
-    def handle_event(self, event: Message) -> None:
-        """Handle the event sent by windows children."""
-        if event[0] == MessageEnum.ShutDown:
-            self.second_window.set_topmost(True)
-            self.second_window.animate((1, 1, 1, 1), 500)
-            self.second_window.destroy()
-            self.second_window.quit()
-            self.running = False
-        elif event[0] == MessageEnum.Resize:
-            duration_ms = event[1]
-            w1, h1 = self.main_window.winfo_width(), self.main_window.winfo_height()
-            label = self.second_window.label
-            w2 = label.winfo_width() + 2 * self.state.layout.padding_x
-            h2 = label.winfo_height() + 2 * self.state.layout.padding_y
-            w_screen = self.main_window.winfo_screenwidth()
-            gap = self.state.layout.windows_gap if len(label['text']) else 0
-            remaining = max(w_screen - gap - w1 - w2, 0)
-            x1 = remaining // 2
-            x2 = w_screen - w2 - remaining // 2
-            self.second_window.animate(
-                (w2, h2, x2, self.state.layout.margin_y), duration_ms)
-            self.main_window.animate(
-                (w1, h1, x1, self.state.layout.margin_y), duration_ms)
-        elif event[0] == MessageEnum.HideTemporarily:
-            self.set_windows_topmost(False)
-            self.state.lesson_state = LessonState.AtClass
-            self.state.current_lesson -= 1
-            lesson = self.state.i_lesson(self.state.current_lesson)
-            lesson.delay = self.state.now + self.state.temporary_hide - \
-                lesson.finish
-            next_lesson = self.state.i_lesson_checked(
-                self.state.current_lesson + 1)
-            if next_lesson is not None:
-                lesson.delay = min(
-                    lesson.delay,
-                    next_lesson.prepare - lesson.finish
-                )
-            self.main_window.class_advance_label['text'] = "下课"
-        elif event[0] == MessageEnum.ClassAdvance:
-            if event[1] == 'on':
-                self.set_windows_topmost(False)
-                self.state.lesson_state = LessonState.AtClass
-                if self.state.current_lesson > 0:
-                    self.main_window.class_labels[
-                        self.state.current_lesson - 1]['fg'] = self.state.color_theme.fg
-                self.main_window.class_labels[self.state.current_lesson]['fg'] = self.state.color_theme.hint
-                self.main_window.class_advance_label['text'] = "下课"
-            else:
-                self.state.current_lesson += 1
-                if self.state.current_lesson < len(self.state.lessons):
-                    self.state.lesson_state = LessonState.Break
-                else:
-                    self.state.lesson_state = LessonState.AfterSchool
-                self.main_window.class_advance_label['text'] = "上课"
+    def reload(self) -> None:
+        info(f"Select the timetable of weekday (0~7) {self.st.weekday}")
+        self.st.load_lessons()
+        self.main_window.load()
 
-        else:
-            assert False, event  # unreachable
+    def resize(self, duration_ms: int, w1: Optional[int] = None) -> None:
+        if w1 is None:
+            w1 = self.main_window.winfo_width()
+        h1 = self.main_window.winfo_height()
+        label = self.second_window.label
+        w2 = label.winfo_width() + 2 * self.st.layout.padding_x
+        h2 = label.winfo_height() + 2 * self.st.layout.padding_y
+        w_screen = self.main_window.winfo_screenwidth()
+        gap = self.st.layout.windows_gap if len(label['text']) else 0
+        remaining = max(w_screen - gap - w1 - w2, 0)
+        x1 = remaining // 2
+        x2 = w_screen - w2 - remaining // 2
+        self.main_window.animate(
+            (w1, h1, x1, self.st.layout.margin_y), duration_ms)
+        self.second_window.animate(
+            (w2, h2, x2, self.st.layout.margin_y), duration_ms)
 
-    def handle_poll(self, event: PollResult, update: bool) -> bool:
+    def shutdown(self) -> None:
+        self.set_windows_topmost(True)
+        self.main_window.destroy(True)
+        self.second_window.destroy(True)
+        self.running = False
+
+    def class_begin(self, index: int) -> None:
+        self.set_windows_topmost(False)
+        self.main_window.class_advance_label['text'] = "下课"
+        class_labels = self.main_window.class_labels
+        if index > 0:
+            class_labels[index - 1
+                         ]['fg'] = self.st.color_theme.fg
+        class_labels[index]['fg'] = self.st.color_theme.hint
+
+    def class_finish(self) -> None:
+        self.set_windows_topmost(True)
+        self.main_window.class_advance_label['text'] = "上课"
+
+    def class_prepare(self, index: int, bell: bool) -> None:
+        if bell:
+            self.main_window.bell()
+        if index > 0:
+            label = self.main_window.class_labels[index - 1]
+            label['fg'] = self.st.color_theme.fg
+        label = self.main_window.class_labels[index]
+        label['fg'] = self.st.color_theme.hint
+
+    def adjust_color(self, pass_ratio: float):
+        pass_ratio = min(max(pass_ratio, 0), 1)
+        class_labels = self.main_window.class_labels
+        i = self.st.current_index
+        if i > 0:
+            class_labels[i - 1]['fg'] = self.st.color_theme.gradient(
+                (1 - pass_ratio) / 1.5)
+        if i < len(self.st.lessons):
+            class_labels[i]['fg'] = self.st.color_theme.gradient(
+                (1 + pass_ratio) / 2)
+
+    def handle_state_poll(self, event: StatePollResult, update: bool) -> bool:
         """Handle the polling result."""
-        if event[0] == PollEnum.Reload:
-            info(f"Select the timetable of weekday {self.state.weekday}")
-            self.state.load_lessons()
-            self.main_window.load()
+        if event[0] == StatePollEnum.Reload:
+            self.reload()
             return True
-        elif event[0] == PollEnum.ClassBegin:
-            self.set_windows_topmost(False)
-            self.main_window.class_advance_label['text'] = "下课"
-        elif event[0] == PollEnum.ClassFinish:
-            self.set_windows_topmost(True)
-            self.main_window.class_advance_label['text'] = "上课"
-        elif event[0] == PollEnum.ClassPrepare:
-            if update:
-                self.main_window.bell()
-            if event[1] > 0:
-                label = self.main_window.class_labels[event[1] - 1]
-                label['fg'] = self.state.color_theme.fg
-            label = self.main_window.class_labels[event[1]]
-            label['fg'] = self.state.color_theme.hint
+        elif event[0] == StatePollEnum.ClassBegin:
+            self.class_begin(event[1])
+        elif event[0] == StatePollEnum.ClassFinish:
+            self.class_finish()
+        elif event[0] == StatePollEnum.ClassPrepare:
+            self.class_prepare(event[1], update)
         else:
-            assert False, event
+            assert False, f"unreachable {event}"
         return False
+
+    def handle_main_poll(self, poll_result: MainPollResult) -> None:
+        """Handle the event sent by main window."""
+        info(f"Main poll captured: {poll_result}")
+
+        if poll_result[0] == MainPollEnum.ShutDown:
+            self.shutdown()
+        elif poll_result[0] == MainPollEnum.Resize:
+            self.resize(2000, poll_result[1])
+        elif poll_result[0] == MainPollEnum.HideTemporarily:
+            original_state = self.st.lesson_state
+            self.st.lesson_state = LessonState.AtClass
+            self.st.current_index -= 1
+            lesson = self.st.current_lesson()
+            delay = self.st.now + self.st.temporary_hide - lesson.finish
+            if original_state != LessonState.AfterSchool:
+                delay = min(
+                    delay,
+                    self.st.next_lesson().prepare - lesson.finish
+                )
+            lesson.delay = delay
+            self.class_begin(self.st.current_index)
+        elif poll_result[0] == MainPollEnum.ClassAdvance:
+            if poll_result[1] == 'on':
+                self.class_begin(self.st.current_index)
+                self.st.lesson_state = LessonState.AtClass
+            elif poll_result[1] == 'off':
+                self.st.current_index += 1
+                if self.st.current_index < len(self.st.lessons):
+                    self.st.lesson_state = LessonState.Break
+                else:
+                    self.st.lesson_state = LessonState.AfterSchool
+                self.class_finish()
+            else:
+                assert False, f"unreachable {poll_result[1]}"
+        elif poll_result[0] == MainPollEnum.ChangeClass:
+            info("Try changing new lessons.")
+            new_lessons = LessonsEditWindow(self.st).run()
+            info(f"Change classes to: {new_lessons}")
+            if new_lessons is not None:
+                self.st.raw_schedule[self.st.weekday] = new_lessons
+                self.reload()
+        elif poll_result[0] == MainPollEnum.ChangeWeekday:
+            info("Try changing the weekday.")
+            weekday = WeekdayEditWindow(self.st).run()
+            info(f"Change weekday to: {weekday}")
+            if weekday is not None:
+                self.st.weekday_map[self.st.now.weekday()] = weekday
+
+        else:
+            assert False, f"unreachable {poll_result}"
+
+    def handle_second_poll(self, poll_result: SecondPollResult) -> None:
+        info(f"Second poll captured: {poll_result}")
+
+        if poll_result == SecondPollResult.ShutDown:
+            self.shutdown()
+        elif poll_result == SecondPollResult.BigChangeResize:
+            self.resize(2000)
+        elif poll_result == SecondPollResult.SmallChangeResize:
+            self.resize(300)
+        else:
+            assert poll_result is None, f"unreachable {poll_result}"
 
     def poll_update(self):
         """Polling, updating mainly the second window and resizing."""
-        MIN_POINT = 9.9
-        text = ""
-        if self.state.lesson_state == LessonState.AtClass:
-            text = "上课时间"
-            lesson = self.state.i_lesson(self.state.current_lesson)
-            if lesson.name in self.state.self_study_lessons:
-                total = self.minute(
-                    lesson.finish + lesson.delay - lesson.start)
-                last = self.minute(lesson.finish - self.state.now)
-                text += " {0}/{1:.0f}".format(
-                    self.format_minutes(last, min(MIN_POINT, total / 2)), total
+        MAX_MIN_OUT_CLASS = 15
+
+        text_prefix = ""
+        text_suffix = ""
+        if self.st.lesson_state == LessonState.AtClass:
+            lesson = self.st.current_lesson()
+            text_prefix = "上课时间"
+            if lesson.name in self.st.self_study_lessons:
+                text_suffix = self.format_progress(
+                    lesson.finish - self.st.now,
+                    lesson.real_finish() - lesson.start,
+                    True
                 )
-        elif self.state.lesson_state == LessonState.Preparing:
-            lesson = self.state.i_lesson(self.state.current_lesson)
-            total = self.minute(self.state.preparation)
-            last = self.minute(lesson.start - self.state.now)
-            text = "预备铃 {0}/{1:.0f}".format(
-                self.format_minutes(last, MIN_POINT), total
+        elif self.st.lesson_state == LessonState.Preparing:
+            lesson = self.st.current_lesson()
+            text_prefix = "预备铃"
+            text_suffix = self.format_progress(
+                lesson.start - self.st.now,
+                self.st.preparation,
+                False
             )
-        elif self.state.lesson_state == LessonState.Break:
-            lesson = self.state.i_lesson(self.state.current_lesson)
-            total = self.minute(
-                lesson.prepare -
-                self.state.i_lesson(self.state.current_lesson - 1).finish)
-            last = self.minute(lesson.prepare - self.state.now)
-            text = "下课 {0}/{1:.0f}".format(
-                self.format_minutes(last, min(MIN_POINT, total / 2)), total
-            )
-            current_lesson = self.state.current_lesson
-            pass_ratio = max(min(last / total, 1), 0)
-            if current_lesson > 0:
-                self.main_window.class_labels[current_lesson]['fg'] = self.state.color_theme.gradient(
-                    pass_ratio / 2)
-            self.main_window.class_labels[
-                current_lesson - 1]['fg'] = self.state.color_theme.gradient(1 - pass_ratio / 2)
-        elif self.state.lesson_state == LessonState.BeforeSchool:
-            first_lesson = self.state.i_lesson(0)
-            text = "{}".format(self.format_minutes(self.minute(
-                first_lesson.prepare - self.state.now), MIN_POINT))
-        elif self.state.lesson_state == LessonState.AfterSchool:
-            self.main_window.class_labels[-1]['fg'] = self.state.color_theme.fg
-            last_lesson = self.state.i_lesson(-1)
-            text = "放学 {}".format(self.format_minutes(
-                self.minute(self.state.now - last_lesson.finish), MIN_POINT))
-        self.second_window.set_text(text)
+        elif self.st.lesson_state == LessonState.Break:
+            lesson = self.st.current_lesson()
+            text_prefix = "下课"
+            remaining = lesson.prepare - self.st.now
+            total = lesson.prepare - self.st.last_lesson().finish
+            text_suffix = self.format_progress(remaining, total, True)
+            self.adjust_color(1 - remaining / total)
+        elif self.st.lesson_state == LessonState.BeforeSchool:
+            text_prefix = ""
+            remaining_min = self.minute(
+                self.st.current_lesson().prepare - self.st.now)
+            text_suffix = self.format_minutes(
+                remaining_min, self.MAX_POINT_DISPLAY)
+            self.adjust_color(1 - remaining_min / MAX_MIN_OUT_CLASS)
+        elif self.st.lesson_state == LessonState.AfterSchool:
+            text_prefix = "放学"
+            last_lesson = self.st.last_lesson()
+            past_min = self.minute(self.st.now - last_lesson.finish)
+            text_suffix = self.format_minutes(
+                past_min, self.MAX_POINT_DISPLAY)
+            self.adjust_color(past_min / MAX_MIN_OUT_CLASS)
+
+        self.second_window.set_text((text_prefix, text_suffix))
 
 
 if __name__ == "__main__":

@@ -1,7 +1,6 @@
 from enum import Enum
 from typing import Optional, Union, Literal, Any
 from json import load as json_load
-from queue import Queue
 from datetime import timedelta, datetime
 from dataclasses import dataclass
 from logging import info
@@ -18,23 +17,7 @@ class LessonState(Enum):
     AtClass = 4
 
 
-class MessageEnum(Enum):
-    """State sent to dispatching center."""
-    ShutDown = 0
-    ClassAdvance = 1
-    HideTemporarily = 2
-    Resize = 3
-
-
-Message = Union[
-    tuple[Literal[MessageEnum.ShutDown]],
-    tuple[Literal[MessageEnum.ClassAdvance], Union[Literal['on'], Literal['off']]],
-    tuple[Literal[MessageEnum.HideTemporarily]],
-    tuple[Literal[MessageEnum.Resize], int]
-]
-
-
-class PollEnum(Enum):
+class StatePollEnum(Enum):
     """The result of polling"""
     Reload = 0
     ClassPrepare = 1
@@ -42,11 +25,11 @@ class PollEnum(Enum):
     ClassFinish = 3
 
 
-PollResult = Union[
-    tuple[Literal[PollEnum.Reload]],
-    tuple[Literal[PollEnum.ClassPrepare], int],
-    tuple[Literal[PollEnum.ClassBegin]],
-    tuple[Literal[PollEnum.ClassFinish]],
+StatePollResult = Union[
+    tuple[Literal[StatePollEnum.Reload]],
+    tuple[Literal[StatePollEnum.ClassPrepare], int],
+    tuple[Literal[StatePollEnum.ClassBegin], int],
+    tuple[Literal[StatePollEnum.ClassFinish]],
 ]
 
 
@@ -75,6 +58,9 @@ class Lesson:
         self.prepare = self.start - preparation
         self.delay = timedelta(0)
 
+    def real_finish(self):
+        return self.finish + self.delay
+
     def __repr__(self) -> str:
         return f"{self.name}: {self.start}-{self.finish}"
 
@@ -87,8 +73,8 @@ class State:
     ENCODING = "utf-8"
     TIME_OFFSET = timedelta(hours=0, minutes=0)  # for development use
 
-    @staticmethod
-    def parse_period(period: str) -> tuple[timedelta, timedelta]:
+    @classmethod
+    def parse_period(cls, period: str) -> tuple[timedelta, timedelta]:
         """
         >>> parse_period("10:05-10:40")
         (timedelta(hours=10, minutes=5), time(hours=11, minutes=40))
@@ -99,15 +85,15 @@ class State:
         return (timedelta(hours=int(begin_hour), minutes=int(begin_minute)),
                 timedelta(hours=int(end_hour), minutes=int(end_minute)))
 
-    @staticmethod
-    def load_config() -> dict[str, Any]:
-        for i, file in enumerate(State.FILES):
+    @classmethod
+    def load_config(cls) -> dict[str, Any]:
+        for i, file in enumerate(cls.FILES):
             try:
-                with open(file, 'r', encoding=State.ENCODING) as f:
+                with open(file, 'r', encoding=cls.ENCODING) as f:
                     return json_load(f)
             except Exception as e:
                 info(f"Config file #{i} ({file}) not found: {e}")
-        raise FileNotFoundError(f"All 3 config files {State.FILES} not found.")
+        raise FileNotFoundError(f"All 3 config files {cls.FILES} not found.")
 
     def __init__(self):
         """Read config from file"""
@@ -138,13 +124,11 @@ class State:
             layout["窗口内上下"], layout["窗口内左右"]
         )
 
-        self.queue: Queue[Message] = Queue()
-
         self.now = datetime.now()
         self.weekday = self.now.weekday()
         self.weekday_map: dict[int, int] = dict()
         self.lesson_state = LessonState.BeforeSchool
-        self.current_lesson = 0  # index (current/next)
+        self.current_index = 0  # index (current/next)
         self.lessons: list[Lesson] = []
         self.load_lessons()
 
@@ -173,7 +157,7 @@ class State:
         """(Re)Load the lessons to (re-)simulate the lesson."""
 
         self.lessons.clear()
-        self.current_lesson = 0
+        self.current_index = 0
         self.lesson_state = LessonState.BeforeSchool
         i = 0
         empty_before = 0
@@ -196,29 +180,29 @@ class State:
                 empty_before = 0
             i += 1
 
-    def i_lesson(self, i: int) -> Lesson:
-        return self.lessons[i]
+    def current_lesson(self):
+        return self.lessons[self.current_index]
 
-    def i_lesson_checked(self, i: int) -> Optional[Lesson]:
-        if 0 <= i < len(self.lessons):
-            return self.i_lesson(i)
-        else:
-            return None
+    def next_lesson(self):
+        return self.lessons[self.current_index + 1]
 
-    def poll_class_preparation(self, index: int) -> bool:
+    def last_lesson(self):
+        return self.lessons[self.current_index - 1]
+
+    def poll_class_preparation(self) -> bool:
         """Check if the first bell is ringing."""
-        return self.i_lesson(index).prepare <= self.now
+        return self.current_lesson().prepare <= self.now
 
-    def poll_class_begin(self, index: int) -> bool:
+    def poll_class_begin(self) -> bool:
         """Check if the second bell is ringing."""
-        return self.i_lesson(index).start <= self.now
+        return self.current_lesson().start <= self.now
 
     def poll_class_end(self) -> bool:
         """Check if the class has finished."""
-        lesson = self.i_lesson(self.current_lesson)
+        lesson = self.current_lesson()
         return lesson.finish + lesson.delay <= self.now
 
-    def _poll(self) -> Optional[PollResult]:
+    def _poll(self) -> Optional[StatePollResult]:
         """Poll and simulate the progress of schedule."""
 
         self.now = datetime.now() + self.TIME_OFFSET
@@ -227,46 +211,46 @@ class State:
         if mapped_weekday is not None:
             if self.weekday != mapped_weekday:
                 self.weekday = mapped_weekday
-                return (PollEnum.Reload, )
+                return (StatePollEnum.Reload, )
         else:
             if self.now.weekday() != self.weekday:
                 self.weekday = self.now.weekday()
-                return (PollEnum.Reload, )
+                return (StatePollEnum.Reload, )
 
         if self.lesson_state == LessonState.BeforeSchool:
-            if self.poll_class_preparation(0):
+            if self.poll_class_preparation():
                 self.lesson_state = LessonState.Preparing
-                return (PollEnum.ClassPrepare, 0)
+                return (StatePollEnum.ClassPrepare, self.current_index)
 
         elif self.lesson_state == LessonState.Preparing:
-            if self.poll_class_begin(self.current_lesson):
+            if self.poll_class_begin():
                 self.lesson_state = LessonState.AtClass
-                return (PollEnum.ClassBegin, )
+                return (StatePollEnum.ClassBegin, self.current_index)
 
         elif self.lesson_state == LessonState.AtClass:
             if self.poll_class_end():
-                self.current_lesson += 1
-                if self.current_lesson < len(self.lessons):
+                self.current_index += 1
+                if self.current_index < len(self.lessons):
                     self.lesson_state = LessonState.Break
                 else:
                     self.lesson_state = LessonState.AfterSchool
-                return (PollEnum.ClassFinish, )
+                return (StatePollEnum.ClassFinish, )
 
         elif self.lesson_state == LessonState.Break:
-            if self.poll_class_preparation(self.current_lesson):
+            if self.poll_class_preparation():
                 self.lesson_state = LessonState.Preparing
-                return (PollEnum.ClassPrepare, self.current_lesson)
+                return (StatePollEnum.ClassPrepare, self.current_index)
 
         else:
-            assert self.lesson_state == LessonState.AfterSchool
+            assert self.lesson_state == LessonState.AfterSchool, f"unreachable {self.lesson_state}"
 
-    def poll_all(self) -> list[PollResult]:
+    def poll_all(self) -> list[StatePollResult]:
         """Poll until there is nothing happening."""
-        result: list[PollResult] = []
+        result: list[StatePollResult] = []
         tmp = self._poll()
         while tmp is not None:
-            info("Event captured: {0} (current_lesson={1})".format(
-                tmp, self.current_lesson))
+            info("State poll captured: {0} (current_lesson={1})".format(
+                tmp, self.current_index))
             result.append(tmp)
             tmp = self._poll()
         return result
