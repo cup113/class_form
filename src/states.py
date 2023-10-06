@@ -28,7 +28,7 @@ class MessageEnum(Enum):
 
 Message = Union[
     tuple[Literal[MessageEnum.ShutDown]],
-    tuple[Literal[MessageEnum.ClassAdvance]],
+    tuple[Literal[MessageEnum.ClassAdvance], Union[Literal['on'], Literal['off']]],
     tuple[Literal[MessageEnum.HideTemporarily]],
     tuple[Literal[MessageEnum.Resize], int]
 ]

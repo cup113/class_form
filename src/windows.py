@@ -128,6 +128,7 @@ class MainWindow(Window):
         self.weekday_label = ClickableLabel(
             self, "", self.st.font, self.change_weekday, state)
         self.class_labels: list[Label] = []
+        self.class_advance_label: Label = Label(self)
 
     def load(self):
         """(Re)Load the window. Generate and place labels and buttons on the window."""
@@ -179,6 +180,8 @@ class MainWindow(Window):
             text, func, color = btn
             button = ClickableLabel(self, text, small_font, func, self.st)
             button['fg'] = color
+            if text == "上课":
+                self.class_advance_label = button
             if i % 2 == 0:
                 button.place(x=x, y=padding_y)
             else:
@@ -218,7 +221,12 @@ class MainWindow(Window):
             name = self.st.i_lesson(current_lesson).name
             hint = f"此操作将会提前进入下一节课: {name}。确定吗？"
             if messagebox.askokcancel("操作确认", hint):  # type: ignore
-                self.st.queue.put((MessageEnum.ClassAdvance, ))
+                self.st.queue.put((MessageEnum.ClassAdvance, 'on'))
+        elif lesson_state in [LessonState.AtClass]:
+            name = self.st.i_lesson(current_lesson).name
+            hint = f"此操作会提前下课 (本节为 {name})。确定吗？"
+            if messagebox.askokcancel("操作确认", hint): # type: ignore
+                self.st.queue.put((MessageEnum.ClassAdvance, 'off'))
         else:
             messagebox.showinfo("提示", HINT)  # type: ignore
 

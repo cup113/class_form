@@ -106,13 +106,23 @@ class Calender:
                     lesson.delay,
                     next_lesson.prepare - lesson.finish
                 )
+            self.main_window.class_advance_label['text'] = "下课"
         elif event[0] == MessageEnum.ClassAdvance:
-            self.set_windows_topmost(False)
-            self.state.lesson_state = LessonState.AtClass
-            if self.state.current_lesson > 0:
-                self.main_window.class_labels[
-                    self.state.current_lesson - 1]['fg'] = self.state.color_theme.fg
-            self.main_window.class_labels[self.state.current_lesson]['fg'] = self.state.color_theme.hint
+            if event[1] == 'on':
+                self.set_windows_topmost(False)
+                self.state.lesson_state = LessonState.AtClass
+                if self.state.current_lesson > 0:
+                    self.main_window.class_labels[
+                        self.state.current_lesson - 1]['fg'] = self.state.color_theme.fg
+                self.main_window.class_labels[self.state.current_lesson]['fg'] = self.state.color_theme.hint
+                self.main_window.class_advance_label['text'] = "下课"
+            else:
+                self.state.current_lesson += 1
+                if self.state.current_lesson < len(self.state.lessons):
+                    self.state.lesson_state = LessonState.Break
+                else:
+                    self.state.lesson_state = LessonState.AfterSchool
+                self.main_window.class_advance_label['text'] = "上课"
 
         else:
             assert False, event  # unreachable
@@ -126,8 +136,10 @@ class Calender:
             return True
         elif event[0] == PollEnum.ClassBegin:
             self.set_windows_topmost(False)
+            self.main_window.class_advance_label['text'] = "下课"
         elif event[0] == PollEnum.ClassFinish:
             self.set_windows_topmost(True)
+            self.main_window.class_advance_label['text'] = "上课"
         elif event[0] == PollEnum.ClassPrepare:
             if update:
                 self.main_window.bell()
@@ -171,11 +183,12 @@ class Calender:
                 self.format_minutes(last, min(MIN_POINT, total / 2)), total
             )
             current_lesson = self.state.current_lesson
+            pass_ratio = max(min(last / total, 1), 0)
             if current_lesson > 0:
                 self.main_window.class_labels[current_lesson]['fg'] = self.state.color_theme.gradient(
-                    last / total / 2)
+                    pass_ratio / 2)
             self.main_window.class_labels[
-                current_lesson - 1]['fg'] = self.state.color_theme.gradient(1 - last / total / 2)
+                current_lesson - 1]['fg'] = self.state.color_theme.gradient(1 - pass_ratio / 2)
         elif self.state.lesson_state == LessonState.BeforeSchool:
             first_lesson = self.state.i_lesson(0)
             text = "{}".format(self.format_minutes(self.minute(
